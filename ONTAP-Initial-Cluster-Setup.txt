@@ -1,0 +1,152 @@
+# Start the key manager setup
+security key-manager onboard enable
+
+# Passphrase
+DsLC1t3Sx5EbPtOW4ng919m4yjFMeRtuvdxsvDAgJs8lnaxxpHSbCnTHKn39sjGd
+
+# Verify that the authentication keys have been created:
+Cluster1::> security key-manager key query -key-type NSE-AK
+
+-------------------------------------------------------------------------------------
+# Configure Service Processor
+system service-processor network modify -node PDCNA-A70-01 -address-family IPv4 -enable true -ip-address 192.168.228.139 -netmask 255.255.254.0 -gateway 192.168.228.1
+system service-processor network modify -node PDCNA-A70-02 -address-family IPv4 -enable true -ip-address 192.168.228.138 -netmask 255.255.254.0 -gateway 192.168.228.1
+
+# Create Broadcase Domain BC-Default
+network port broadcast-domain create -ipspace Default -broadcast-domain BC-vlan105 -mtu 1500 
+network port broadcast-domain create -ipspace Default -broadcast-domain BC-vlan111 -mtu 1500 
+
+# Create ifgrp
+network port ifgrp create -node PDCNA-A70-01 -ifgrp a0a -distr-func ip -mode multimode_lacp
+network port ifgrp create -node PDCNA-A70-01 -ifgrp a0b -distr-func ip -mode multimode_lacp
+network port ifgrp create -node PDCNA-A70-02 -ifgrp a0a -distr-func ip -mode multimode_lacp
+network port ifgrp create -node PDCNA-A70-02 -ifgrp a0b -distr-func ip -mode multimode_lacp
+
+# Add port to ifgrp // lacp 4 ports
+network port ifgrp add-port -node PDCNA-A70-01 -ifgrp a0a -port e2a
+network port ifgrp add-port -node PDCNA-A70-01 -ifgrp a0a -port e2b
+network port ifgrp add-port -node PDCNA-A70-01 -ifgrp a0b -port e2c
+network port ifgrp add-port -node PDCNA-A70-01 -ifgrp a0b -port e2d
+network port ifgrp add-port -node PDCNA-A70-02 -ifgrp a0a -port e2a
+network port ifgrp add-port -node PDCNA-A70-02 -ifgrp a0a -port e2b
+network port ifgrp add-port -node PDCNA-A70-02 -ifgrp a0b -port e2c
+network port ifgrp add-port -node PDCNA-A70-02 -ifgrp a0b -port e2d
+
+# CIFS/intercluster 105 | iscsi/nas 111
+# create MGMT/CIFS/NFS vlan
+vlan create -node PDCNA-A70-01 -port a0a -vlan-id 105
+vlan create -node PDCNA-A70-01 -port a0a -vlan-id 111
+vlan create -node PDCNA-A70-01 -port a0b -vlan-id 105
+vlan create -node PDCNA-A70-01 -port a0b -vlan-id 111
+vlan create -node PDCNA-A70-02 -port a0a -vlan-id 105
+vlan create -node PDCNA-A70-02 -port a0a -vlan-id 111
+vlan create -node PDCNA-A70-02 -port a0b -vlan-id 105
+vlan create -node PDCNA-A70-02 -port a0b -vlan-id 111
+
+# Add Ports to Broadcase Domain
+network port broadcast-domain add-ports -broadcast-domain BC-vlan105 -ports PDCNA-A70-01:a0a-105 -ipspace Default
+network port broadcast-domain add-ports -broadcast-domain BC-vlan105 -ports PDCNA-A70-02:a0a-105 -ipspace Default
+network port broadcast-domain add-ports -broadcast-domain BC-vlan105 -ports PDCNA-A70-01:a0b-105 -ipspace Default
+network port broadcast-domain add-ports -broadcast-domain BC-vlan105 -ports PDCNA-A70-02:a0b-105 -ipspace Default
+network port broadcast-domain add-ports -broadcast-domain BC-vlan111 -ports PDCNA-A70-01:a0a-111 -ipspace Default
+network port broadcast-domain add-ports -broadcast-domain BC-vlan111 -ports PDCNA-A70-02:a0a-111 -ipspace Default
+network port broadcast-domain add-ports -broadcast-domain BC-vlan111 -ports PDCNA-A70-01:a0b-111 -ipspace Default
+network port broadcast-domain add-ports -broadcast-domain BC-vlan111 -ports PDCNA-A70-02:a0b-111 -ipspace Default
+
+# Create data aggregate
+storage aggregate create -aggregate PDCNA-A70_01_aggr1 -diskcount 11?? -node PDCNA-A70-01
+storage aggregate create -aggregate PDCNA-A70_02_aggr1 -diskcount 11?? -node PDCNA-A70-02
+
+# Create SVM / vserver
+vserver create -vserver svm0 -subtype default -rootvolume svm0_root -rootvolume-security-style mixed -language C.UTF-8 -snapshot-policy default -aggregate cluster1_01_SSD_1
+vserver modify -vserver svm0 -allowed-protocols nfs,iscsi,cifs
+vserver nfs on -vserver svm0
+vserver iscsi create -vserver svm0
+vserver iscsi on -vserver svm0
+vserver cifs create -vserver svm0 -cifs-server svm0 -domain lab.local
+
+# enable NFS vstorage
+vserver nfs modify -vserver svm0 -vstorage enabled
+
+# NTP / timezone configuration
+cluster time-service ntp server create -server 192.168.0.11
+
+timezone -timezone America/Los_Angeles
+
+# DNS Configuration
+vserver services name-service dns create -vserver svm0 -domains lab.local -name-servers 192.168.0.11 -state enabled
+
+
+
+cluster ha modify -configured true
+storage failover modify -node * -enable true
+
+###################### LIKELY WILL NOT NEED - SVM-DR WILL MIGRATE THESE ######################
+# Create NFS route 
+network route create -vserver svm0 -destination 0.0.0.0/0 -gateway 192.168.0.1
+
+# Create NFS export policy
+vserver export-policy rule create -policyname default -clientmatch 0.0.0.0/0 -vserver svm0 -protocol nfs -rorule sys -rwrule sys -superuser any
+
+# Create NFS LIFs
+network interface create -vserver svm0 -lif svm0-nfs-lif1 -service-policy default-data-files -address 192.168.0.21 -netmask 255.255.255.0 -home-node cluster1-01 -home-port e0c -status-admin up
+network interface create -vserver svm0 -lif svm0-nfs-lif2 -service-policy default-data-files -address 192.168.0.22 -netmask 255.255.255.0 -home-node cluster1-02 -home-port e0c -status-admin up
+
+# Create CIFS LIFs
+network interface create -vserver svm0 -lif svm0-cifs-lif1 -service-policy default-data-files -address 192.168.0.23 -netmask 255.255.255.0 -home-node cluster1-01 -home-port e0c -status-admin up
+network interface create -vserver svm0 -lif svm0-cifs-lif2 -service-policy default-data-files -address 192.168.0.24 -netmask 255.255.255.0 -home-node cluster1-02 -home-port e0c -status-admin up
+
+network interface create -vserver svm0 -lif svm0-iscsi-lif1 -service-policy default-data-iscsi -address 192.168.0.25 -netmask 255.255.255.0 -home-node cluster1-01 -home-port e0c -status-admin up
+network interface create -vserver svm0 -lif svm0-iscsi-lif2 -service-policy default-data-iscsi -address 192.168.0.26 -netmask 255.255.255.0 -home-node cluster1-02 -home-port e0c -status-admin up
+
+network interface create -vserver cluster1 -lif svm0-icl-lif1 -service-policy default-intercluster -address 192.168.0.28 -netmask 255.255.255.0 -home-node cluster1-01 -home-port e0c -status-admin up
+network interface create -vserver cluster1 -lif svm0-icl-lif2 -service-policy default-intercluster -address 192.168.0.29 -netmask 255.255.255.0 -home-node cluster1-02 -home-port e0c -status-admin up
+
+
+
+
+
+# Create SVM / vserver
+vserver create -vserver svm1 -subtype default -rootvolume svm1_root -rootvolume-security-style mixed -language C.UTF-8 -snapshot-policy default -aggregate cluster2_01_SSD_1
+vserver modify -vserver svm1 -allowed-protocols nfs,iscsi,cifs
+vserver nfs on -vserver svm1
+vserver iscsi create -vserver svm1
+
+vserver cifs create -vserver svm1 -cifs-server svm1 -domain lab.local
+
+# enable NFS vstorage
+vserver nfs modify -vserver svm1 -vstorage enabled
+
+# NTP / timezone configuration
+cluster time-service ntp server create -server 192.168.0.11
+
+timezone -timezone America/Los_Angeles
+
+# DNS Configuration
+vserver services name-service dns create -vserver svm1 -domains lab.local -name-servers 192.168.0.11 -state enabled
+
+
+
+cluster ha modify -configured true
+storage failover modify -node * -enable true
+
+###################### LIKELY WILL NOT NEED - SVM-DR WILL MIGRATE THESE ######################
+# Create NFS route 
+network route create -vserver svm1 -destination 0.0.0.0/0 -gateway 192.168.0.1
+
+# Create NFS export policy
+vserver export-policy rule create -policyname default -clientmatch 0.0.0.0/0 -vserver svm0 -protocol nfs -rorule sys -rwrule sys -superuser any
+
+# Create NFS LIFs
+network interface create -vserver svm1 -lif svm0-nfs-lif1 -service-policy default-data-files -address 192.168.0.121 -netmask 255.255.255.0 -home-node cluster2-01 -home-port e0c -status-admin up
+network interface create -vserver svm1 -lif svm0-nfs-lif2 -service-policy default-data-files -address 192.168.0.122 -netmask 255.255.255.0 -home-node cluster2-02 -home-port e0c -status-admin up
+
+# Create CIFS LIFs
+network interface create -vserver svm1 -lif svm0-cifs-lif1 -service-policy default-data-files -address 192.168.0.123 -netmask 255.255.255.0 -home-node cluster2-01 -home-port e0c -status-admin up
+network interface create -vserver svm1 -lif svm0-cifs-lif2 -service-policy default-data-files -address 192.168.0.124 -netmask 255.255.255.0 -home-node cluster2-02 -home-port e0c -status-admin up
+
+network interface create -vserver svm1 -lif svm0-iscsi-lif1 -service-policy default-data-iscsi -address 192.168.0.125 -netmask 255.255.255.0 -home-node cluster2-01 -home-port e0c -status-admin up
+network interface create -vserver svm1 -lif svm0-iscsi-lif2 -service-policy default-data-iscsi -address 192.168.0.126 -netmask 255.255.255.0 -home-node cluster2-02 -home-port e0c -status-admin up
+
+network interface create -vserver cluster2 -lif svm0-icl-lif1 -service-policy default-intercluster -address 192.168.0.128 -netmask 255.255.255.0 -home-node cluster2-01 -home-port e0c -status-admin up
+network interface create -vserver cluster2 -lif svm0-icl-lif2 -service-policy default-intercluster -address 192.168.0.129 -netmask 255.255.255.0 -home-node cluster2-02 -home-port e0c -status-admin up
