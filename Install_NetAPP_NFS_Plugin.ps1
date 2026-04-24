@@ -10,7 +10,7 @@
     Date    : 2023-06-05
     Version : 1.0
     Module  : VMware.PowerCLI
-    Repo    : infra-automation/NetApp/ONTAP/PowerShell
+    Repo    : netapp-ontap-powershell
     WARNING : Contains hardcoded ESXi credentials. Replace with Get-Credential before production use.
               Run /script-migrate on this file to update to repo credential standards.
 #>

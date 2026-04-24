@@ -47,7 +47,7 @@ Always use this header:
     Date    : <today's date>
     Version : 1.0
     Module  : DataONTAP / NetApp PowerShell Toolkit
-    Repo    : infra-automation/NetApp
+    Repo    : netapp-ontap-powershell
 #>
 ```
 - Never hardcode credentials — use `Get-Credential` or check for environment variables
